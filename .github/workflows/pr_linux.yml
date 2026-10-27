@@ -24,6 +24,7 @@ jobs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
       plan_digest: ${{ steps.plan.outputs.plan_digest }}
       lane_plan: ${{ steps.plan.outputs.linux_lane_plan }}
+      claude_compat: ${{ (contains(steps.changes.outputs.affected_crates, 'skippy-inference-api') || contains(steps.changes.outputs.affected_crates, 'mesh-llm-host-runtime')) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -67,31 +68,6 @@ jobs:
           draft: ${{ github.event.pull_request.draft || false }}
           changed_files: ${{ steps.change_limit.outputs.force_all == 'true' && '__force_all__' || steps.changes.outputs.changed_files }}
           affected_crates: ${{ steps.changes.outputs.affected_crates }}
-      - name: Check out immutable PR source for Claude compatibility
-        if: ${{ contains(steps.changes.outputs.affected_crates, 'skippy-inference-api') || contains(steps.changes.outputs.affected_crates, 'mesh-llm-host-runtime') }}
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ steps.identity.outputs.source_sha }}
-          persist-credentials: false
-      - name: Install pinned Claude Code client
-        if: ${{ contains(steps.changes.outputs.affected_crates, 'skippy-inference-api') || contains(steps.changes.outputs.affected_crates, 'mesh-llm-host-runtime') }}
-        run: |
-          npm install --global @anthropic-ai/claude-code@2.1.273
-          test "$(claude --version | awk '{print $1}')" = "2.1.273"
-      - name: Install repository build accelerator
-        if: ${{ contains(steps.changes.outputs.affected_crates, 'skippy-inference-api') || contains(steps.changes.outputs.affected_crates, 'mesh-llm-host-runtime') }}
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-      - name: Run Claude Code protocol and real-client integration
-        if: ${{ contains(steps.changes.outputs.affected_crates, 'skippy-inference-api') || contains(steps.changes.outputs.affected_crates, 'mesh-llm-host-runtime') }}
-        env:
-          CARGO_INCREMENTAL: '0'
-          CARGO_PROFILE_TEST_DEBUG: '0'
-          MESH_LLM_SKIP_UI: '1'
-        run: |
-          cargo test --locked -p skippy-inference-api
-          cargo test --locked -p mesh-llm-host-runtime --no-default-features \
-            --features claude-code-integration \
-            claude_cli_executes_read_tool_through_host_ingress
 
   lane:
     name: Linux
@@ -109,9 +85,40 @@ jobs:
       original_event_name: pull_request
       supersession_key: pr-${{ github.event.pull_request.number }}
 
+  claude-compat:
+    name: Claude Code compatibility
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.claude_compat == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable PR source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          persist-credentials: false
+      - name: Install pinned Claude Code client
+        run: |
+          npm install --global @anthropic-ai/claude-code@2.1.273
+          test "$(claude --version | awk '{print $1}')" = "2.1.273"
+      - name: Install repository build accelerator
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: Run Claude Code protocol and real-client integration
+        env:
+          CARGO_INCREMENTAL: '0'
+          CARGO_PROFILE_TEST_DEBUG: '0'
+          MESH_LLM_SKIP_UI: '1'
+        run: |
+          cargo test --locked -p skippy-inference-api
+          cargo test --locked -p mesh-llm-host-runtime --no-default-features \
+            --features claude-code-integration \
+            claude_cli_executes_read_tool_through_host_ingress
+
   required:
     name: PR / Linux
-    needs: [plan, lane]
+    needs: [plan, lane, claude-compat]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     permissions: {}
@@ -120,6 +127,8 @@ jobs:
         env:
           LANE_PLAN: ${{ needs.plan.outputs.lane_plan }}
           LANE_RESULT: ${{ needs.lane.result }}
+          CLAUDE_COMPAT: ${{ needs.plan.outputs.claude_compat }}
+          CLAUDE_COMPAT_RESULT: ${{ needs.claude-compat.result }}
           PLAN_DIGEST: ${{ needs.plan.outputs.plan_digest }}
           PLAN_RESULT: ${{ needs.plan.result }}
         run: |
@@ -130,5 +139,10 @@ jobs:
             [[ "$LANE_RESULT" == "success" ]]
           else
             [[ "$LANE_RESULT" == "skipped" ]]
+          fi
+          if [[ "$CLAUDE_COMPAT" == "true" ]]; then
+            [[ "$CLAUDE_COMPAT_RESULT" == "success" ]]
+          else
+            [[ "$CLAUDE_COMPAT_RESULT" == "skipped" ]]
           fi
           echo "Plan digest: \`$PLAN_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"

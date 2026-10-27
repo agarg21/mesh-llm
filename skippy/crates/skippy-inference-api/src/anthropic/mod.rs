@@ -36,3 +36,6 @@ pub use normalize::normalize_messages_request;
 pub use wire::{MessagesWireStream, completion_events, translate_chat_value};
 
 mod validation;
+// ci-measure rerun F1 2026-10-26T23:55:54.527170+00:00
+// ci-measure rerun F2 2026-10-27T00:55:29.404808+00:00
+// ci-measure rerun F3 2026-10-27T01:36:24.042248+00:00
