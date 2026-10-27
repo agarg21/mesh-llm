@@ -37,3 +37,4 @@ pub use wire::{MessagesWireStream, completion_events, translate_chat_value};
 
 mod validation;
 // ci-measure rerun B1 2026-10-26T23:01:16.349687+00:00
+// ci-measure rerun B2 2026-10-27T00:15:36.889191+00:00
